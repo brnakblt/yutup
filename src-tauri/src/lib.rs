@@ -297,33 +297,42 @@ async fn fetch_formats(url: String, browser: String, cookies_file: Option<String
         args.push(browser_target.to_string());
     }
 
+    // Try to find the directory containing yt_dlp to set our working directory safely
     let mut target_dir = std::env::current_dir().unwrap_or_default();
-    while !target_dir.join("yt_dlp").exists() && target_dir.parent().is_some() {
-        target_dir = target_dir.parent().unwrap().to_path_buf();
-    }
-
-    let mut cmd = Command::new("python");
-    cmd.current_dir(&target_dir);
-    cmd.arg("-m");
-    cmd.arg("yt_dlp");
+    let mut yt_dlp_module_exists = target_dir.join("yt_dlp").exists();
     
-    for arg in &args {
-        cmd.arg(arg);
+    while !yt_dlp_module_exists && target_dir.parent().is_some() {
+        target_dir = target_dir.parent().unwrap().to_path_buf();
+        yt_dlp_module_exists = target_dir.join("yt_dlp").exists();
     }
 
-    let output = cmd.output().unwrap_or_else(|_| {
+    let output = if yt_dlp_module_exists {
+        let mut cmd = Command::new("python");
+        cmd.current_dir(&target_dir);
+        cmd.arg("-m");
+        cmd.arg("yt_dlp");
+        for arg in &args {
+            cmd.arg(arg);
+        }
+        cmd.output().map_err(|e| format!("Failed to execute python -m yt_dlp: {}", e))?
+    } else {
         let mut fallback = Command::new("yt-dlp");
-        fallback.current_dir(&target_dir);
+        // Don't force current_dir to target_dir if it's just the root or something unrelated
         for arg in &args {
             fallback.arg(arg);
         }
-        fallback.output().expect("Failed to execute yt-dlp")
-    });
+        fallback.output().map_err(|e| format!("Failed to execute yt-dlp binary: {}. Make sure yt-dlp is installed and in your PATH.", e))?
+    };
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        if err_msg.is_empty() {
+            Err(format!("yt-dlp failed with exit code: {:?}", output.status.code()))
+        } else {
+            Err(err_msg)
+        }
     }
 }
 

@@ -529,6 +529,7 @@ window.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => { fetchFormatsBtn!.textContent = "Fetch Info"; fetchFormatsBtn!.disabled = false; }, 2000);
       } catch (err) {
         console.error("Format fetch failed", err);
+        alert("Failed to fetch info: " + err);
         fetchFormatsBtn!.textContent = "Failed";
         previewContainer?.classList.add('hidden');
         setTimeout(() => { fetchFormatsBtn!.textContent = "Fetch Info"; fetchFormatsBtn!.disabled = false; }, 2000);
