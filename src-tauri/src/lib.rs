@@ -281,23 +281,23 @@ fn download_video(
 
 #[tauri::command]
 async fn fetch_formats(url: String, browser: String, cookies_file: Option<String>) -> Result<String, String> {
-    let mut args = vec![
+    let mut base_args = vec![
         "-J".to_string(), 
         "--no-playlist".to_string(),
         "--no-warnings".to_string(),
-        url
+        url.clone()
     ];
 
+    let mut cookie_args = Vec::new();
     if let Some(cookie_path) = cookies_file {
-        args.push("--cookies".to_string());
-        args.push(cookie_path);
+        cookie_args.push("--cookies".to_string());
+        cookie_args.push(cookie_path);
     } else if !browser.is_empty() {
         let browser_target = if browser == "all" { "chrome" } else { &browser };
-        args.push("--cookies-from-browser".to_string());
-        args.push(browser_target.to_string());
+        cookie_args.push("--cookies-from-browser".to_string());
+        cookie_args.push(browser_target.to_string());
     }
 
-    // Try to find the directory containing yt_dlp to set our working directory safely
     let mut target_dir = std::env::current_dir().unwrap_or_default();
     let mut yt_dlp_module_exists = target_dir.join("yt_dlp").exists();
     
@@ -306,33 +306,56 @@ async fn fetch_formats(url: String, browser: String, cookies_file: Option<String
         yt_dlp_module_exists = target_dir.join("yt_dlp").exists();
     }
 
-    let output = if yt_dlp_module_exists {
-        let mut cmd = Command::new("python");
-        cmd.current_dir(&target_dir);
-        cmd.arg("-m");
-        cmd.arg("yt_dlp");
-        for arg in &args {
-            cmd.arg(arg);
+    let run_cmd = |args: &[String]| -> Result<std::process::Output, String> {
+        if yt_dlp_module_exists {
+            let mut cmd = Command::new("python");
+            cmd.current_dir(&target_dir);
+            cmd.arg("-m");
+            cmd.arg("yt_dlp");
+            for arg in args {
+                cmd.arg(arg);
+            }
+            cmd.output().map_err(|e| format!("Failed to execute python -m yt_dlp: {}", e))
+        } else {
+            let mut fallback = Command::new("yt-dlp");
+            for arg in args {
+                fallback.arg(arg);
+            }
+            fallback.output().map_err(|e| format!("Failed to execute yt-dlp binary: {}. Make sure yt-dlp is installed and in your PATH.", e))
         }
-        cmd.output().map_err(|e| format!("Failed to execute python -m yt_dlp: {}", e))?
-    } else {
-        let mut fallback = Command::new("yt-dlp");
-        // Don't force current_dir to target_dir if it's just the root or something unrelated
-        for arg in &args {
-            fallback.arg(arg);
-        }
-        fallback.output().map_err(|e| format!("Failed to execute yt-dlp binary: {}. Make sure yt-dlp is installed and in your PATH.", e))?
     };
+
+    let mut full_args = base_args.clone();
+    full_args.extend(cookie_args.clone());
+
+    let mut output = run_cmd(&full_args)?;
+
+    // If it failed and we were using cookies, try falling back to no cookies
+    if !output.status.success() && !cookie_args.is_empty() {
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        if err_msg.contains("cookie") || err_msg.contains("Cookie") || err_msg.contains("Chrome") {
+            // Retry without cookies
+            output = run_cmd(&base_args)?;
+        }
+    }
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
-        if err_msg.is_empty() {
-            Err(format!("yt-dlp failed with exit code: {:?}", output.status.code()))
+        let mut final_err = if err_msg.is_empty() {
+            format!("yt-dlp failed with exit code: {:?}", output.status.code())
         } else {
-            Err(err_msg)
+            err_msg
+        };
+
+        if final_err.contains("Could not copy Chrome cookie database") {
+            final_err.push_str("\n💡 Tip: Please fully close Chrome or use a cookies.txt file instead.");
+        } else if final_err.contains("Failed to decrypt with DPAPI") {
+            final_err.push_str("\n💡 Tip: Chrome's new security is blocking extraction. Export cookies to a .txt file using a browser extension.");
         }
+
+        Err(final_err)
     }
 }
 
