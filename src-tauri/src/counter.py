@@ -1,6 +1,12 @@
 import sys
 
-with open(r'c:\Users\baran\Desktop\dev\hobi\yt-dlp\yt-dlp-gui\src-tauri\src\lib.rs', 'r', encoding='utf-8') as f:
+import os
+
+# Use a path relative to the script's location
+script_dir = os.path.dirname(os.path.abspath(__file__))
+lib_rs_path = os.path.join(script_dir, 'lib.rs')
+
+with open(lib_rs_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
 brace_count = 0
